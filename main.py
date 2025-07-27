@@ -31,10 +31,15 @@ from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
+load_dotenv() 
+ # load variables from .env
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key")
+import os
+print("SECRET_KEY =", os.getenv("JWT_SECRET_KEY"))
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
-load_dotenv()  # load variables from .env
+
 
 
 
@@ -42,6 +47,7 @@ load_dotenv()  # load variables from .env
 
 # Get MongoDB URI from env
 MONGO_URI = os.getenv("MONGODB_URI")
+
 
 # Connect to MongoDB Atlas
 client = MongoClient(MONGO_URI)
@@ -65,6 +71,8 @@ app.add_middleware(
 # Store vector databases in memory
 vector_dbs = {}
 
+
+
 class GoogleToken(BaseModel):
     token: str
 
@@ -84,7 +92,9 @@ def decode_access_token(token: str):
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
+    print(f"Received token: {token}")
     payload = decode_access_token(token)
+    print(f"Decoded payload: {payload}")
     if payload is None or "sub" not in payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
     return payload["sub"]  # This will be the email in your token    
@@ -198,42 +208,58 @@ async def login(email: str = Body(...), password: str = Body(...)):
 
 @app.post("/upload_pdfs")
 async def upload_pdfs(files: List[UploadFile] = File(...), current_user: str = Depends(get_current_user)):
+    print(f"[UPLOAD] Received {len(files)} files from user {current_user}")
+    
     all_docs = []
-    temp_dir = "./temp"
-    os.makedirs(temp_dir, exist_ok=True) 
+    os.makedirs("./temp", exist_ok=True)
+
     for uploaded_file in files:
-        path = f"./temp/{uploaded_file.filename}"
-        with open(path, "wb") as f:
-            f.write(await uploaded_file.read())
+        try:
+            print(f"[UPLOAD] Processing: {uploaded_file.filename}")
+            file_content = await uploaded_file.read()
+            
+            # Save file
+            path = f"./temp/{uploaded_file.filename}"
+            with open(path, "wb") as f:
+                f.write(file_content)
+            print(f"[UPLOAD] File saved to: {path}")
 
-        loader = UnstructuredPDFLoader(path)
-        docs = loader.load()
-        all_docs.extend(docs)
+            # Load PDF
+            loader = UnstructuredPDFLoader(path)
+            docs = loader.load()
+            print(f"[UPLOAD] Extracted {len(docs)} documents from {uploaded_file.filename}")
 
+            if not docs:
+                raise Exception("No text extracted from PDF")
+
+            all_docs.extend(docs)
+
+        except Exception as e:
+            print(f"[UPLOAD ERROR] Error processing {uploaded_file.filename}: {e}")
+            raise HTTPException(status_code=500, detail=f"PDF upload failed: {e}")
+
+    # Continue if all files succeeded
     chunks = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200).split_documents(all_docs)
 
-    # Create vectorstore and store in memory
-    collection_name = f"multi-pdf-rag-{uuid.uuid4().hex}"  # unique collection name per upload
+    collection_name = f"multi-pdf-rag-{uuid.uuid4().hex}"
     vector_db = Chroma.from_documents(
         documents=chunks,
         embedding=OllamaEmbeddings(model="nomic-embed-text"),
         collection_name=collection_name
     )
 
-    vector_dbs[collection_name] = vector_db  # <-- store for later retrieval
-
-    from datetime import datetime  # make sure this is imported at the top
+    vector_dbs[collection_name] = vector_db
 
     chat_collection.insert_one({
-    "user_email": current_user, 
-    "collection_name": collection_name,
-    "pdf_files": [f.filename for f in files],
-    "chat_history": [],
-    "created_at": datetime.utcnow()
+        "user_email": current_user,
+        "collection_name": collection_name,
+        "pdf_files": [f.filename for f in files],
+        "chat_history": [],
+        "created_at": datetime.utcnow()
     })
 
-
     return {"message": "Uploaded successfully", "collection_name": collection_name}
+
 
 
 

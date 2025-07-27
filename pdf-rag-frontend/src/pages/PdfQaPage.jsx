@@ -21,6 +21,7 @@ const [previousChats, setPreviousChats] = useState([]);
 
 useEffect(() => {
   const token = localStorage.getItem("access_token");
+   console.log("Token for /chats fetch:", token);
 
   axios.get("http://localhost:8000/chats", {
     headers: { Authorization: `Bearer ${token}` }
@@ -75,7 +76,8 @@ useEffect(() => {
     alert("Please select one or more PDFs.");
     return;
   }
-
+  console.log("Uploading files:", file);
+  
   setUploading(true);
 
   const formData = new FormData();
@@ -84,12 +86,13 @@ useEffect(() => {
   });
 
   const token = localStorage.getItem("access_token");
+  console.log("Upload token:", token);
 
   try {
     const res = await axios.post("http://localhost:8000/upload_pdfs", formData, {
       headers: {
         "Content-Type": "multipart/form-data",
-        Authorization: `Bearer ${token}`, 
+        "Authorization" : `Bearer ${token}`, 
       },
     });
     console.log(res.data);
