@@ -81,9 +81,11 @@ useEffect(() => {
   setUploading(true);
 
   const formData = new FormData();
-  file.forEach((f) => {
-    formData.append("files", f);  // 'files' is the key to be read in backend
-  });
+ file.forEach((f) => {
+  if (f.isLocalFile) {
+    formData.append("files", f.file);
+  }
+});
 
   const token = localStorage.getItem("access_token");
   console.log("Upload token:", token);
@@ -231,6 +233,22 @@ const handleDeleteChat = async (deletedCollectionName) => {
 };
 
 
+async function fetchPdfWithAuth(collectionName, filename) {
+  const token = localStorage.getItem("access_token");
+  const url = `http://localhost:8000/pdf-files/${collectionName}/${encodeURIComponent(filename)}`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch PDF");
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
 
 
 
@@ -275,6 +293,27 @@ const handleDeleteChat = async (deletedCollectionName) => {
           if (res.data.chat_history) {
             setChatHistory(res.data.chat_history);
             setCollectionName(chat.collection_name);
+
+       if (res.data.pdf_files && Array.isArray(res.data.pdf_files)) {
+  const filesWithUrls = res.data.pdf_files.map(filename => ({
+    name: filename,
+    url: `http://localhost:8000/pdf-files/${chat.collection_name}/${encodeURIComponent(filename)}`,
+    isLocalFile: false,
+  }));
+  setFile(filesWithUrls);
+  if (filesWithUrls.length > 0) {
+  // Instead of setPreviewFileURL(filesWithUrls[0].url);
+  fetchPdfWithAuth(chat.collection_name, filesWithUrls[0].name)
+    .then(url => setPreviewFileURL(url))
+    .catch(err => {
+      console.error("Failed to load PDF preview", err);
+      setPreviewFileURL("");
+    });
+}
+
+}
+
+
           }
         })
         .catch((err) => console.error("Failed to load chat", err));
@@ -387,26 +426,23 @@ const handleDeleteChat = async (deletedCollectionName) => {
     id="file-upload"
     type="file"
     accept="application/pdf"
-    onChange={(e) => {
-      const selected = Array.from(e.target.files);
-      if (selected.length === 0) return;
+  onChange={(e) => {
+  const selected = Array.from(e.target.files).map(f => ({
+    name: f.name,
+    file: f,
+    isLocalFile: true,
+  }));
+  if (selected.length === 0) return;
 
-      setFile((prevFiles) => {
-        const existing = new Set(prevFiles.map((f) => f.name));
-        const uniqueNew = selected.filter((f) => !existing.has(f.name));
-        return [...prevFiles, ...uniqueNew];
+  setFile(prevFiles => {
+    const existingNames = new Set(prevFiles.map(f => f.name));
+    const uniqueNew = selected.filter(f => !existingNames.has(f.name));
+    return [...prevFiles, ...uniqueNew];
+  });
 
-         // Set preview to first file if not set
-    if (newFiles.length > 0 && !previewFileURL) {
-      const url = URL.createObjectURL(newFiles[0]);
-      setPreviewFileURL(url);
-    }
-    
-    return newFiles;
-      });
+  e.target.value = null;
+}}
 
-      e.target.value = null;
-    }}
     className="file-input-hidden"
     disabled={uploading}
     multiple
@@ -422,17 +458,30 @@ const handleDeleteChat = async (deletedCollectionName) => {
   {file.length > 0 && (
     <div className="file-names-grid">
       {file.map((f, idx) => (
-        <div key={idx} className="file-name-grid-item"
-          onClick={() => {
-        const url = URL.createObjectURL(f);
+  <div
+    key={idx}
+    className="file-name-grid-item"
+    onClick={() => {
+      if (file[idx].isLocalFile) {
+        const url = URL.createObjectURL(file[idx].file);
         setPreviewFileURL(url);
-      }}
-      style={{ cursor: "pointer" }}
-      title="Click to preview"
-      >
-          📄 {f.name}
-        </div>
-      ))}
+      } else {
+        // fetch PDF blob with auth token and set URL
+        fetchPdfWithAuth(collectionName, f.name)
+          .then(url => setPreviewFileURL(url))
+          .catch(err => {
+            console.error("Failed to fetch PDF preview", err);
+            setPreviewFileURL("");
+          });
+      }
+    }}
+    style={{ cursor: "pointer" }}
+    title="Click to preview"
+  >
+    📄 {f.name}
+  </div>
+))}
+
     </div>
   )}
 

@@ -16,6 +16,8 @@ from google.auth.transport import requests
 from fastapi.security import OAuth2PasswordRequestForm
 import bcrypt
 from fastapi import Body,Request
+from fastapi.responses import FileResponse
+from fastapi import Path
 
 from typing import List
 import os
@@ -101,8 +103,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
 
 @app.put("/chat/{collection_name}/rename")
-def rename_chat(collection_name: str, request: Request, current_user: str = Depends(get_current_user)):
-    body =  request.json()
+async def rename_chat(collection_name: str, request: Request, current_user: str = Depends(get_current_user)):
+    body =  await request.json()
     new_name = body.get("new_name")
     if not new_name:
         raise HTTPException(status_code=400, detail="New name required")
@@ -334,3 +336,19 @@ def get_chat(collection_name: str, current_user: str = Depends(get_current_user)
     if not session:
         return {"error": "Chat not found or you don't have access"}
     return session
+
+
+@app.get("/pdf-files/{collection_name}/{filename}")
+def serve_pdf_file(collection_name: str = Path(...), filename: str = Path(...), current_user: str = Depends(get_current_user)):
+    # For security, you may want to verify the user owns this collection/chat
+    session = chat_collection.find_one({"collection_name": collection_name, "user_email": current_user})
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat not found or unauthorized")
+
+    # Construct the file path
+    file_path = os.path.join("temp", filename)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Return the file as a streaming response with correct content type
+    return FileResponse(file_path, media_type="application/pdf", filename=filename)
